@@ -1,0 +1,218 @@
+import mysql.connector
+from pymysql import Error, MySQLError
+
+def get_connection():
+    try:
+        conn = mysql.connector.connect(
+            host = "192.168.100.20",
+            user = "cjulib",
+            password = "security",
+            database = "cju"
+        )
+        return conn
+    except Error as e:
+        print(f"DB연결 실패 {e}")
+        return None
+
+# 메인 메뉴 루프
+def main_menu():
+    while True:
+        print("\n--- [ 성적 관리 시스템 ] ---")
+        print("1. 전체조회")
+        print("2. 번호조회")
+        print("3. 성적 추가")
+        print("4. 성적 삭제")
+        print("5. 성적 수정")
+        print("6. 종료")
+        print("---------------------------")
+        
+        choice = input("메뉴 선택: ")
+        
+        if choice == '1':
+            select_all()
+        elif choice == '2':
+            select_one()
+        elif choice == '3':
+            insert_member()
+        elif choice == '4':
+            delete_member()
+        elif choice == '5':
+            update_member()
+        elif choice == '6':
+            print("프로그램을 종료합니다.")
+            break
+        else:
+            print("잘못된 선택입니다. 다시 입력해주세요.")
+
+def select_all():
+    conn = get_connection()
+    if not conn: return
+
+    cusor = conn.cursor(dictionary=True)
+    cusor.execute("""SELECT 
+                  m.seq,m.name,
+	              m.id, 
+                  g.subject,
+                  g.score, 
+                  g.term,
+                  g.reg_date
+                  FROM member m
+                  JOIN grades g ON m.seq = g.member_seq""")
+    rows = cusor.fetchall()
+
+    print("---[ 성적 전체 목록 ]--")
+    print(" 번호    | 이름(ID):           | 과목명            | 점수 | 학기  | 등록일")    
+    print("-----------------------------------------------------------")
+    if not rows:
+        print("등록된 데이터가 없습니다.")
+    else:
+        for r in rows:
+             print(f" 번호: {r['seq']} | 이름 {r['name']} ({r['id']}) | {r['subject']} | {r['score']} | {r['term']} | {r['reg_date']} ")
+    
+    cusor.close()
+    print("-----------------------------------------------------------")
+    conn.close()
+
+def select_one():
+    conn = get_connection()
+    cusor = conn.cursor(dictionary=True)
+
+    seq = input("조회할 학생 번호(seq)를 입력: ")
+
+    query = """
+        SELECT
+            m.name,
+            m.id,
+            g.term,
+            g.subject,
+            g.score
+        FROM member m
+        JOIN grades g ON m.seq = g.member_seq
+        WHERE m.seq = %s
+    """
+
+    cusor.execute(query, (seq,))
+    results = cusor.fetchall()
+
+    if results: 
+        first_row = results[0]
+        print(f"---{first_row['name']} 학생의 성적 리포트 ]---")
+        print(f"-아이디: {first_row['id']}")
+        print(f"-학기: {first_row['term']}")
+        print("----------------------------------")
+
+        total_score = 0
+        for idx, r in enumerate(results, 1):
+            print(f"{idx}. {r['subject']}: {r['score']}점")
+            total_score += r['score']
+
+        avg_score = total_score / len(results)
+        print("----------------------------------")
+        print(f"평균 점수: {avg_score:.1f}점")
+
+    else:
+        print("해당 번호의 학생이 없습니다.")
+
+def insert_member():
+    print("---[ 성적 데이터 추가 ]---")
+    seq = input("학생 번호(seq) 입력: ")
+    subject = input("과목명 입력: ")
+    score = input("점수 입력: ")
+    term = input("학기 입력(예: 2026-1): ")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    sql = """INSERT INTO grades (
+                member_seq, 
+                subject, 
+                score, 
+                term ) 
+             VALUES (%s, %s, %s, %s)"""
+
+    try:
+        cursor.execute(sql,(seq, subject , score, term,))
+        conn.commit()
+
+        print(f"학생번호'{seq}' 학생의 '{subject}' 성적이 성공적으로 등록되었습니다.")
+    except Error as e:
+        print(f"추가 실패 {e}" )
+        conn.rollback()
+    finally:
+        cursor.close()
+        conn.close()
+
+def delete_member():
+    id_grade = input("삭제할 성적의 고유 ID(id_grade)입력: ")
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        check_sql = "SELECT subject FROM grades WHERE id_grade = %s"
+        cursor.execute(check_sql, (id_grade,))
+        target_grade = cursor.fetchone()
+
+        if not target_grade:
+            print("해당 ID의 성적 데이터를 찾을 수 없습니다.")
+            return
+
+        confirm = input("정말로 삭제하시겠습니까? (y/n): ")
+
+        if confirm.lower() == 'y':
+            delete_sql = "DELETE FROM grades WHERE id_grade = %s"
+            cursor.execute(delete_sql,(id_grade,))
+            conn.commit()
+
+            deleted_subject = target_grade['subject']
+            print(f"[시스템] {id_grade}번 성적 데이터가 삭제되었습니다. (대상: {deleted_subject})")
+        
+        else:
+            print("[시스템] 삭제가 취소되었습니다.")
+    
+    except Exception as e:
+        print(f"[시스템] 삭제 중 오류가 발생했습니다. {e}")
+        conn.rollback()
+
+    finally:
+        cursor.close()
+        conn.close()
+
+def update_member():
+    id_grade = input("수정할 성적의 고유 ID(id_grade)입력: ")
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        check_sql = "SELECT subject, score FROM grades WHERE id_grade = %s"
+        cursor.execute(check_sql, (id_grade,))
+        target_grade = cursor.fetchone()
+
+        if not target_grade:
+            print("[시스템] 해당 ID의 성적 데이터를 찾을 수 없습니다.")
+            return
+        
+        current_subject = target_grade['subject']
+        current_score = target_grade['score']
+
+        print(f"--- 현재 정보: {current_subject} ({current_score}점)---")
+        new_score = input("-수정할 점수 입력: ")
+
+        update_sql = "UPDATE grades SET score = %s WHERE id_grade = %s"
+        cursor.execute(update_sql, (new_score, id_grade,))
+        conn.commit()
+
+        print(f"[시스템] 성적 수정이 완료되었습니다. ({current_score}점 -> {new_score}점)")
+
+    except Exception as e:
+        print(f"[시스템] 수정 중 오류가 발생했습니다: {e}")
+        conn.rollback()
+    
+    finally:
+        cursor.close()
+        conn.close()
+
+
+if __name__ == "__main__":
+    main_menu()
